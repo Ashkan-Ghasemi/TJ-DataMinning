@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>نمایشگر PDF</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Tahoma, Arial, sans-serif; background: #eef1f5; color: #172033; }
+    header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; background: #172033; color: white; box-shadow: 0 2px 8px #0002; }
+    header strong { margin-left: auto; }
+    button, input { font: inherit; border: 1px solid #cbd2df; border-radius: 8px; padding: 8px 11px; }
+    button { cursor: pointer; background: #fff; color: #172033; }
+    button:disabled { opacity: .45; cursor: default; }
+    input { width: min(260px, 55vw); }
+    #status { padding: 10px 16px; text-align: center; color: #4b5568; }
+    #pages { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 12px; }
+    canvas { display: block; max-width: 100%; height: auto; background: white; box-shadow: 0 2px 12px #15223820; }
+    .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    @media (max-width: 600px) { header { gap: 7px; padding: 10px; } header strong { width: 100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>نمایشگر PDF</strong>
+    <div class="tools">
+      <input id="filename" aria-label="نام فایل PDF" value="PRJ-1.pdf" placeholder="نام فایل PDF">
+      <button id="open">باز کردن</button>
+      <button id="prev" disabled>قبلی</button>
+      <span id="pageinfo">— / —</span>
+      <button id="next" disabled>بعدی</button>
+      <button id="zoomout" disabled>−</button>
+      <button id="zoomin" disabled>+</button>
+      <button id="download" disabled>دریافت PDF</button>
+    </div>
+  </header>
+  <div id="status" role="status">در حال آماده‌سازی نمایشگر…</div>
+  <main id="pages"></main>
+
+  <script type="module">
+    import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+
+    const $ = id => document.getElementById(id);
+    let pdf = null, page = 1, scale = 1.25, renderToken = 0, currentUrl = '';
+    const status = $('status'), pages = $('pages');
+
+    function setControls(enabled) {
+      ['prev','next','zoomout','zoomin','download'].forEach(id => $(id).disabled = !enabled);
+    }
+    function safePdfPath(name) {
+      const clean = name.trim();
+      if (!clean || clean.includes('..') || /[\\]/.test(clean)) throw new Error('نام فایل معتبر نیست. فقط نام فایل PDF داخل مخزن را وارد کن.');
+      return clean.split('/').map(encodeURIComponent).join('/');
+    }
+    async function openPdf() {
+      const token = ++renderToken;
+      try {
+        const path = safePdfPath($('filename').value);
+        currentUrl = new URL(path, window.location.href).href;
+        status.textContent = 'در حال بارگذاری PDF…';
+        pages.replaceChildren();
+        pdf = await pdfjsLib.getDocument({ url: currentUrl }).promise;
+        if (token !== renderToken) return;
+        page = 1;
+        setControls(true);
+        await renderAll(token);
+      } catch (error) {
+        if (token !== renderToken) return;
+        pdf = null;
+        setControls(false);
+        pages.replaceChildren();
+        status.textContent = 'فایل باز نشد. مطمئن شو PDF با همین نام در کنار index.html در مخزن قرار دارد. (' + error.message + ')';
+      }
+    }
+    async function renderAll(token = ++renderToken) {
+      if (!pdf) return;
+      pages.replaceChildren();
+      status.textContent = 'صفحه ' + page + ' از ' + pdf.numPages;
+      $('pageinfo').textContent = page + ' / ' + pdf.numPages;
+      $('prev').disabled = page <= 1;
+      $('next').disabled = page >= pdf.numPages;
+      const p = await pdf.getPage(page);
+      if (token !== renderToken) return;
+      const viewport = p.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { alpha: false });
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(viewport.width * ratio);
+      canvas.height = Math.floor(viewport.height * ratio);
+      canvas.style.width = viewport.width + 'px';
+      canvas.style.height = viewport.height + 'px';
+      pages.append(canvas);
+      await p.render({ canvasContext: ctx, viewport, transform: ratio !== 1 ? [ratio,0,0,ratio,0,0] : null }).promise;
+      if (token === renderToken) status.textContent = 'صفحه ' + page + ' از ' + pdf.numPages;
+    }
+    $('open').addEventListener('click', openPdf);
+    $('filename').addEventListener('keydown', e => { if (e.key === 'Enter') openPdf(); });
+    $('prev').addEventListener('click', () => { if (pdf && page > 1) { page--; renderAll(); } });
+    $('next').addEventListener('click', () => { if (pdf && page < pdf.numPages) { page++; renderAll(); } });
+    $('zoomout').addEventListener('click', () => { if (pdf && scale > .6) { scale = Math.max(.6, scale - .15); renderAll(); } });
+    $('zoomin').addEventListener('click', () => { if (pdf && scale < 3) { scale = Math.min(3, scale + .15); renderAll(); } });
+    $('download').addEventListener('click', () => { if (currentUrl) window.open(currentUrl, '_blank', 'noopener'); });
+    const initialFile = new URLSearchParams(location.search).get('file');
+    if (initialFile) $('filename').value = initialFile;
+    openPdf();
+  </script>
+</body>
+</html>
